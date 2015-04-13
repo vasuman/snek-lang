@@ -1,0 +1,7 @@
+*.pyc
+.dir.locals.el
+*.swp
+*.swo
+*~
+\#*\#
+.\#*
