@@ -1,8 +1,10 @@
+import sys
 import tokenize as tkn
 from io import BytesIO
 import ast
 #TODO(vasuman): Package-based relative imports
-from target import *
+import target
+import events
 
 class ParseException(Exception):
     pass
@@ -116,9 +118,9 @@ def parse_event(gen, f):
                 id = gen.assert_kind(tkn.NAME)
                 gen.assert_kind(tkn.NEWLINE)
                 print type, id
-                fields.append(StructField(type, id))
+                fields.append(target.Field(type, id))
             gen.next()
-            return StructValidator(fields)
+            return target.Struct(fields)
 
         def parse_union(gen):
             fmap = {}
@@ -128,11 +130,11 @@ def parse_event(gen, f):
                 fmap[key] = type
             gen.next()
             print fmap
-            return UnionValidator(fmap)
-    
+            return target.Union(fmap)
+
         if gen.peek.kind == tkn.NEWLINE:
             gen.next() # Consume
-            return EmptyValidator()
+            return target.Empty()
         name = gen.assert_kind(tkn.NAME)
         if name == 'struct':
             assert_block(gen)
@@ -145,7 +147,8 @@ def parse_event(gen, f):
 
     event_name = gen.assert_kind(tkn.NAME)
     event_type = parse_type(gen)
-    
+    f.events[event_name] = events.Event(event_name, event_type)
+
 
 def get_base_indent(line):
     return len(line) - len(line.lstrip())
@@ -156,6 +159,9 @@ def normalize(block_str):
     base_indent = get_base_indent(lines[0])
     return '\n'.join([line[base_indent:] for line in lines])
 
+def parse_decl(gen):
+    pass
+
 def buf_line(line):
     return BytesIO(line.strip()).readline
 
@@ -164,7 +170,7 @@ def parse_directive(line):
         if not first:
             gen.assert_val(',')
         return gen.assert_kind(tkn.NAME)
-        
+
     def get_dst_name():
         gen.assert_val(':')
         return gen.assert_kind(tkn.NAME)
@@ -172,18 +178,20 @@ def parse_directive(line):
     if not line.strip().startswith('$'):
         return line
     il = get_base_indent(line)
-    indent = line[:il]
+    ret = line[:il]
     gen = TokenGen(tkn.generate_tokens(buf_line(line)))
     gen.assert_val('$')
     name = gen.assert_kind(tkn.NAME)
-    print name
-    ret = None
     if name == 'transition':
         next_state = get_param(True)
-        print 'ns: ', next_state
-        ret = '%s%s().transition(%s, "%s")' % (indent, GET_REACTOR_FUNC, GET_MODULE_FUNC, next_state)
+        ret += '%s().transition(%s(), "%s")' % \
+              (target.GET_REACTOR_FUNC, target.GET_MODULE_FUNC, next_state)
+    elif name == 'pump':
+        stream = get_param(True)
+    else:
+        raise ParseException('unknown directive (%s)' % name)
     if not gen.empty:
-        raise ParseException('dangling in directive (%s)' % line.strip())    
+        raise ParseException('dangling in directive (%s)' % line.strip())
     return ret
 
 def resolve_directives(func_str):
@@ -195,10 +203,11 @@ def get_event_name(gen):
     quals = []
     while gen.peek == DOT_TOK:
         gen.assert_tok(DOT_TOK)
-        quals.append(gen.assert_kind(tkn.STRING))
+        s = gen.assert_kind(tkn.STRING)
+        quals.append(ast.literal_eval(s))
     return name, quals
 
-TRAP_PARAMS = ['event']
+SPECIAL_EVENTS = ['entry', 'exit', 'connected', 'closed']
 def parse_module(gen, f):
     def parse_state(gen):
         def parse_trap(gen):
@@ -206,43 +215,52 @@ def parse_module(gen, f):
             assert_block(gen)
             toks = map(lambda x: x.get_tuple(), gen.get_block())
             body = resolve_directives(tkn.untokenize(toks))
-            print body
-            func_name = get_func_name()
-            print func_name
-            assemble_func(body, func_name, TRAP_PARAMS, mod._namespace)
-            trap = StateTrap(event_name, quals, func_name)
-            state.traps.append(trap)
+            func_name = target.get_func_name(mod._namespace)
+            print func_name, body
+            handler = mod.assemble_trap(func_name, body, state.name)
+            #TODO(vasuman): handle special events!
+            if event_name in ('entry', 'exit'):
+                if getattr(state, 'on_' + event_name) != None:
+                    raise ParseException('multiple %s traps' % event_name)
+                if len(quals) != 0:
+                    raise ParseException('not expecting qualifiers')
+                setattr(state, 'on_' + event_name, handler)
+            elif event_name in f.events:
+                event = f.events[event_name]
+                event.trap(quals, handler)
+            else:
+                raise ParseException('Invalid event name, %s' % event_name)
 
         state_name = gen.assert_kind(tkn.NAME)
-        state = ModuleState(state_name)
+        state = target.ModState(state_name)
         assert_block(gen)
         parse_block(gen, on=parse_trap)
         mod.states[state_name] = state
 
     def parse_def(gen):
-        if mod._current != None:
+        if mod.default != None:
             raise ParseException('redeclared `default` state in %s' % mod_name)
         def_state = gen.assert_kind(tkn.NAME)
         if not def_state in mod.states:
             raise ParseException('invalid `default` state %s' % def_state)
-        mod._current = def_state
+        mod.default = def_state
         gen.assert_kind(tkn.NEWLINE)
 
     mod_name = gen.assert_kind(tkn.NAME)
-    mod = SnekModule(mod_name)
+    mod = target.SnekModule(mod_name)
     assert_block(gen)
     parse_block(gen,
                 state = parse_state,
                 default = parse_def)
-    if mod._current == None:
+    if mod.default == None:
         raise ParseException('missing `default` state in %s' % mod_name)
-    f.modules[mod_name] = mod
+    f.modules.append(mod)
 
 def parse(readline):
     #TODO(vasuman): Preprocessor `#include`s
     tokens = tkn.generate_tokens(readline)
     gen = TokenGen(tokens)
-    f = SnekFile()
+    f = target.SnekFile()
     while not gen.empty:
         name = gen.assert_kind(tkn.NAME)
         if name == 'module':
@@ -273,14 +291,9 @@ event Query union:
 
 module Test:
   state init:
-    on Q."test":
+    on Query."Hello":
       $transition stop
-      def this(x, y):
-        x <<= 1
-        y += 1
-        if x == -1:
-          pass
-      print event.param
+      print "Not ok"
     on entry:
       print "Hello World"
   default init
@@ -291,10 +304,10 @@ def parse_string(s):
     tkn.tokenize(io.BytesIO(s).readline)
     return parse(io.BytesIO(s).readline)
 
-import target
-reload(target)
-
 if __name__ == '__main__':
     with open(sys.argv[1], 'rb') as f:
         parse(f.readline)
+
+reload(target)
+reload(events)
 #END REMOVE

@@ -1,2 +1,2 @@
-import .parser
-import .target
+import parser
+import target
