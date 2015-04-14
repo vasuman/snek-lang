@@ -2,14 +2,17 @@ import sys
 import tokenize as tkn
 from io import BytesIO
 import ast
-#TODO(vasuman): Package-based relative imports
+# TODO(vasuman): Package-based relative imports
 import target
 import events
+
 
 class ParseException(Exception):
     pass
 
+
 class Token(object):
+
     def __init__(self, t):
         self.kind = t[0]
         self.val = t[1]
@@ -35,7 +38,9 @@ class Token(object):
 
 SKIP_TOKENS = [tkn.NL, tkn.COMMENT]
 
+
 class TokenGen(object):
+
     def __init__(self, gen):
         self._gen = gen
         self.empty = False
@@ -71,12 +76,13 @@ class TokenGen(object):
     def assert_kind(self, kind):
         if self.peek.kind != kind:
             name = tkn.tok_name[kind]
-            raise ParseException("expected kind %s, got %s" % (name, self.peek))
+            raise ParseException(
+                "expected kind %s, got %s" % (name, self.peek))
         return self.next().val
 
     def assert_val(self, val):
         if self.peek.val != val:
-            raise ParseException("expected val %s, got %s"  % (val, self.peek))
+            raise ParseException("expected val %s, got %s" % (val, self.peek))
         return self.next()
 
     def get_block(self):
@@ -97,17 +103,20 @@ class TokenGen(object):
         self.assert_kind(tkn.NEWLINE)
         self.assert_kind(tkn.INDENT)
 
+
 def print_tokens(tokens):
     for tok in tokens:
         tkn.printtoken(*tok)
 
+
 def parse_block(gen, **kwargs):
     while gen.peek.kind != tkn.DEDENT:
         name = gen.assert_kind(tkn.NAME)
-        if not name in kwargs:
+        if name not in kwargs:
             raise ParseException('unexpected name (%s)' % (name))
         kwargs[name](gen)
-    gen.next() # Consume `DEDENT`
+    gen.next()  # Consume `DEDENT`
+
 
 VALID_TYPES = ['int', 'str', 'float', 'map', 'list']
 def get_type(name):
@@ -139,7 +148,7 @@ def parse_event(gen, f):
             return target.Union(fmap)
 
         if gen.peek.kind == tkn.NEWLINE:
-            gen.next() # Consume
+            gen.next()  # Consume
             return target.Empty()
         name = gen.assert_kind(tkn.NAME)
         if name == 'struct':
@@ -149,7 +158,8 @@ def parse_event(gen, f):
             gen.assert_block()
             return parse_union(gen)
         else:
-            raise ParseException('type must be `param` or `union` got %s' % name)
+            raise ParseException(
+                'type must be `param` or `union` got %s' % name)
 
     event_name = gen.assert_kind(tkn.NAME)
     event_type = parse_type(gen)
@@ -159,20 +169,24 @@ def parse_event(gen, f):
 def get_base_indent(line):
     return len(line) - len(line.lstrip())
 
+
 def normalize(block_str):
     block_str = block_str.strip('\\\n')
     lines = block_str.splitlines()
     base_indent = get_base_indent(lines[0])
     return '\n'.join([line[base_indent:] for line in lines])
 
+
 def parse_decl(gen):
     gen.assert_block()
+
 
 def buf_line(line):
     return BytesIO(line.strip()).readline
 
+
 def parse_directive(line):
-    def get_param(first = False):
+    def get_param(first=False):
         if not first:
             gen.assert_val(',')
         return gen.assert_kind(tkn.NAME)
@@ -191,7 +205,7 @@ def parse_directive(line):
     if name == 'transition':
         next_state = get_param(True)
         ret += '%s().transition(%s(), "%s")' % \
-              (target.GET_REACTOR_FUNC, target.GET_MODULE_FUNC, next_state)
+            (target.GET_REACTOR_FUNC, target.GET_MODULE_FUNC, next_state)
     elif name == 'pump':
         stream = get_param(True)
     else:
@@ -200,10 +214,13 @@ def parse_directive(line):
         raise ParseException('dangling in directive (%s)' % line.strip())
     return ret
 
+
 def resolve_directives(func_str):
     return '\n'.join(map(parse_directive, func_str.splitlines()))
 
 DOT_TOK = Token((tkn.OP, '.'))
+
+
 def get_event_name(gen):
     name = gen.assert_kind(tkn.NAME)
     quals = []
@@ -214,6 +231,8 @@ def get_event_name(gen):
     return name, quals
 
 SPECIAL_EVENTS = ['entry', 'exit', 'connected', 'closed']
+
+
 def parse_module(gen, f):
     def parse_state(gen):
         def parse_trap(gen):
@@ -224,7 +243,7 @@ def parse_module(gen, f):
             func_name = target.get_func_name(mod._namespace)
             print func_name, body
             handler = mod.assemble_trap(func_name, body, state.name)
-            #TODO(vasuman): handle special events!
+            # TODO(vasuman): handle special events!
             if event_name in ('entry', 'exit'):
                 if getattr(state, 'on_' + event_name) != None:
                     raise ParseException('multiple %s traps' % event_name)
@@ -244,10 +263,10 @@ def parse_module(gen, f):
         mod.states[state_name] = state
 
     def parse_def(gen):
-        if mod.default != None:
+        if mod.default is not None:
             raise ParseException('redeclared `default` state in %s' % mod_name)
         def_state = gen.assert_kind(tkn.NAME)
-        if not def_state in mod.states:
+        if def_state not in mod.states:
             raise ParseException('invalid `default` state %s' % def_state)
         mod.default = def_state
         gen.assert_kind(tkn.NEWLINE)
@@ -256,14 +275,15 @@ def parse_module(gen, f):
     mod = target.SnekModule(mod_name)
     gen.assert_block()
     parse_block(gen,
-                state = parse_state,
-                default = parse_def)
-    if mod.default == None:
+                state=parse_state,
+                default=parse_def)
+    if mod.default is None:
         raise ParseException('missing `default` state in %s' % mod_name)
     f.modules.append(mod)
 
+
 def parse(readline):
-    #TODO(vasuman): Preprocessor `#include`s
+    # TODO(vasuman): Preprocessor `#include`s
     tokens = tkn.generate_tokens(readline)
     gen = TokenGen(tokens)
     f = target.SnekFile()
@@ -274,7 +294,7 @@ def parse(readline):
         elif name == 'event':
             parse_event(gen, f)
         elif name == 'decl':
-            if not f.decl is None:
+            if f.decl is not None:
                 raise ParseException('multiple `decl` blocks!')
             parse_decl(gen, f)
         else:
@@ -282,7 +302,7 @@ def parse(readline):
     return f
 
 
-#REMOVE
+# REMOVE
 TEST_PROGRAM = '''
 event Query union:
   "Hello"
@@ -305,6 +325,7 @@ module Test:
   default init
 '''
 
+
 def parse_string(s):
     import io
     tkn.tokenize(io.BytesIO(s).readline)
@@ -316,4 +337,4 @@ if __name__ == '__main__':
 
 reload(target)
 reload(events)
-#END REMOVE
+# END REMOVE

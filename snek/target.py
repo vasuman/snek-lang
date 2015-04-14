@@ -3,7 +3,9 @@ import _ast
 import events
 import random
 
+
 class AttrDict(dict):
+
     def __init__(self, *args, **kwargs):
         super(AttrDict, self).__init__(*args, **kwargs)
 
@@ -13,16 +15,19 @@ class AttrDict(dict):
     def __setattr__(self, attr, val):
         return self.__setitem__(attr, val)
 
+
 class TypeException(Exception):
     pass
 
+
 class Union():
+
     def __init__(self, kmap):
         self.kmap = kmap
 
     def assert_has(self, qual):
         print 'km:', self.kmap
-        if not qual in self.kmap:
+        if qual not in self.kmap:
             raise TypeException("invalid specifier %s" % qual)
 
     def new(self, specs, params):
@@ -42,8 +47,8 @@ class Context():
         self.specs = specs
         self.params = params
 
-
 class Field():
+
     def __init__(self, type, id):
         self.type = type
         self.id = id
@@ -52,11 +57,14 @@ class Field():
         if type(val) != self.type:
             raise TypeException("type for field %s don't match" % self.id)
 
+
 def assert_empty(ls):
     if len(ls) != 0:
         raise TypeException("dangling, %s" % ls)
 
+
 class Struct():
+
     def __init__(self, fields):
         self.fmap = {f.id: f for f in fields}
         self.fields = fields
@@ -85,19 +93,23 @@ class Struct():
         else:
             raise TypeException("unhandled params case")
 
+
 class Empty():
+
     def validate(self, quals):
         assert_empty(quals)
         return True
 
     def new(self, specs, params):
         assert_empty(specs)
-        if params != None:
+        if params is not None:
             raise TypeException("Empty type takes no `parameters`")
         return None
 
 # FIXME -- check namespace to see if name is free
 MAX_RANGE = 500
+
+
 def get_func_name(ns):
     return '_trap_func%s' % random.randint(1, MAX_RANGE)
 
@@ -112,13 +124,17 @@ def f(%s):
   pass
 '''
 
+
 class ModState():
+
     def __init__(self, name):
         self.name = name
         self.on_entry = None
         self.on_exit = None
 
+
 class SnekModule():
+
     def __init__(self, name):
         self.name = name
         self.states = {}
@@ -143,8 +159,8 @@ class SnekModule():
             return wrapper
 
         exec '' in self._namespace
-        self._namespace[GET_REACTOR_FUNC] = lambda : self.reactor
-        self._namespace[GET_MODULE_FUNC] = lambda : self
+        self._namespace[GET_REACTOR_FUNC] = lambda: self.reactor
+        self._namespace[GET_MODULE_FUNC] = lambda: self
         self._add_func(match_state)
 
     def _exec(self, name):
@@ -167,13 +183,17 @@ class SnekModule():
         exec compile(fmod, '<ast>', 'exec') in self._namespace
         return self._exec(name)
 
+
 class Event():
+
     def __init__(self, name, qual, params):
         self.name = name
         self.qual = qual
         self.params = params
 
+
 class SnekFile(object):
+
     def __init__(self):
         self.modules = []
         self.events = {}
