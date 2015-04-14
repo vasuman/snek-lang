@@ -37,6 +37,12 @@ class Union():
         self.assert_has(quals[0])
         return self.kmap[quals[0]].validate(quals[1:])
 
+class Context():
+    def __init__(self, specs, params):
+        self.specs = specs
+        self.params = params
+
+
 class Field():
     def __init__(self, type, id):
         self.type = type

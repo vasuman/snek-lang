@@ -92,14 +92,14 @@ class TokenGen(object):
                 cnt += 1
         return block[:-1]
 
+    def assert_block(self):
+        self.assert_val(':')
+        self.assert_kind(tkn.NEWLINE)
+        self.assert_kind(tkn.INDENT)
+
 def print_tokens(tokens):
     for tok in tokens:
         tkn.printtoken(*tok)
-
-def assert_block(gen):
-    gen.assert_val(':')
-    gen.assert_kind(tkn.NEWLINE)
-    gen.assert_kind(tkn.INDENT)
 
 def parse_block(gen, **kwargs):
     while gen.peek.kind != tkn.DEDENT:
@@ -108,6 +108,12 @@ def parse_block(gen, **kwargs):
             raise ParseException('unexpected name (%s)' % (name))
         kwargs[name](gen)
     gen.next() # Consume `DEDENT`
+
+VALID_TYPES = ['int', 'str', 'float', 'map', 'list']
+def get_type(name):
+    if not name in VALID_TYPES:
+        raise ParseException('invalid type, %s' % name)
+    return eval(name)
 
 def parse_event(gen, f):
     def parse_type(gen):
@@ -137,10 +143,10 @@ def parse_event(gen, f):
             return target.Empty()
         name = gen.assert_kind(tkn.NAME)
         if name == 'struct':
-            assert_block(gen)
+            gen.assert_block()
             return parse_params(gen)
         elif name == 'union':
-            assert_block(gen)
+            gen.assert_block()
             return parse_union(gen)
         else:
             raise ParseException('type must be `param` or `union` got %s' % name)
@@ -160,7 +166,7 @@ def normalize(block_str):
     return '\n'.join([line[base_indent:] for line in lines])
 
 def parse_decl(gen):
-    pass
+    gen.assert_block()
 
 def buf_line(line):
     return BytesIO(line.strip()).readline
@@ -212,7 +218,7 @@ def parse_module(gen, f):
     def parse_state(gen):
         def parse_trap(gen):
             event_name, quals = get_event_name(gen)
-            assert_block(gen)
+            gen.assert_block()
             toks = map(lambda x: x.get_tuple(), gen.get_block())
             body = resolve_directives(tkn.untokenize(toks))
             func_name = target.get_func_name(mod._namespace)
@@ -233,7 +239,7 @@ def parse_module(gen, f):
 
         state_name = gen.assert_kind(tkn.NAME)
         state = target.ModState(state_name)
-        assert_block(gen)
+        gen.assert_block()
         parse_block(gen, on=parse_trap)
         mod.states[state_name] = state
 
@@ -248,7 +254,7 @@ def parse_module(gen, f):
 
     mod_name = gen.assert_kind(tkn.NAME)
     mod = target.SnekModule(mod_name)
-    assert_block(gen)
+    gen.assert_block()
     parse_block(gen,
                 state = parse_state,
                 default = parse_def)
