@@ -2,6 +2,7 @@ import socket as sck
 
 
 class Pipe():
+
     def __init__(self, name, type):
         self.name = name
         self.type = type
@@ -9,4 +10,3 @@ class Pipe():
 
     def connect(self, addr):
         while
-        
