@@ -5,20 +5,23 @@ LOCAL = 0b01
 REMOTE = 0b10
 ANY = 0b11
 
+
 def matches(specs, quals):
     l = len(quals)
     if not specs[:l] == quals:
-        return 
+        return
     return l
 
+
 class Event():
+
     def __init__(self, name, typ):
         self.name = name
         self.typ = typ
         self._handlers = []
 
     def trap(self, quals, handler):
-        #TODO(vasuman): Check `quals`
+        # TODO(vasuman): Check `quals`
         self.typ.validate(quals)
         self._handlers.append((quals, handler))
 
@@ -26,14 +29,16 @@ class Event():
         m = []
         p = self.typ.new(specs, params)
         for quals, handler in self._handlers:
-            v =  matches(specs, quals)
-            if v != None:
+            v = matches(specs, quals)
+            if v is not None:
                 m.append((v, handler))
         print m
-        for _, handler in sorted(m, reverse = True):
+        for _, handler in sorted(m, reverse=True):
             handler(params)
 
+
 class Reactor(threading.Thread):
+
     def __init__(self):
         super(Reactor, self).__init__()
         self.running = False
@@ -56,7 +61,7 @@ class Reactor(threading.Thread):
             event, specs, params = self.eq.get()
             event.fire(specs, params)
 
-    def submit(self, event, specs, params = None):
+    def submit(self, event, specs, params=None):
         self.q.put((event, specs, params))
 
     def transition(self, mod, state):
