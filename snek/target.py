@@ -116,8 +116,6 @@ def get_func_name(ns):
 GET_REACTOR_FUNC = '_get_reactor'
 GET_MODULE_FUNC = '_get_module'
 
-TRAP_PARAMS = []
-
 FUNC_TEMPLATE = '''
 @match_state("%s")
 def f(%s):
@@ -169,10 +167,10 @@ class SnekModule():
             exec call_string in self._namespace
         return wrapper
 
-    def assemble_trap(self, name, body, state):
+    def assemble_trap(self, name, body, state, params=[]):
         # Parsing body
         bmod = ast.parse(body)
-        fmod = ast.parse(FUNC_TEMPLATE % (state, ','.join(TRAP_PARAMS)))
+        fmod = ast.parse(FUNC_TEMPLATE % (state, ','.join(params)))
         # Defining function
         func_def = fmod.body[0]
         func_def.name = name
@@ -182,15 +180,6 @@ class SnekModule():
         # Compiling!!
         exec compile(fmod, '<ast>', 'exec') in self._namespace
         return self._exec(name)
-
-
-class Event():
-
-    def __init__(self, name, qual, params):
-        self.name = name
-        self.qual = qual
-        self.params = params
-
 
 class SnekFile(object):
 

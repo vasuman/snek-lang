@@ -21,7 +21,6 @@ class Event():
         self._handlers = []
 
     def trap(self, quals, handler):
-        # TODO(vasuman): Check `quals`
         self.typ.validate(quals)
         self._handlers.append((quals, handler))
 
@@ -43,26 +42,40 @@ class Reactor(threading.Thread):
         super(Reactor, self).__init__()
         self.running = False
         self.eq = Queue()
+        self.sp = Queue()
         self._handlers = {}
         self._transitions = []
 
     def _do_transition(self, mod, state):
+        print 'Transition %s from %s to %s' % (mod.name, mod.state, state)
         if mod.state and mod.states[mod.state].on_exit:
-            mod.states[mod.state].on_exit()
+            mod.states[mod.state].on_exit(state)
+        prev_state = mod.state
         mod.state = state
         if mod.state and mod.states[mod.state].on_entry:
-            mod.states[state].on_entry()
+            mod.states[state].on_entry(prev_state)
+
+    def special(self, func, *args):
+        self.sp.put((func, args))
 
     def run(self, *args, **kwargs):
         self.running = True
+        print 'Reactor started'
         while self.running:
-            for mod, state in self._transitions:
-                self._do_transition(mod, state)
-            event, specs, params = self.eq.get()
-            event.fire(specs, params)
+            try:
+                while not self.sp.empty():
+                    func, args = self.sp.get()
+                    func(*args)
+                for mod, state in self._transitions:
+                    self._do_transition(mod, state)
+                event, specs, params = self.eq.get()
+                event.fire(specs, params)
+            except e:
+                print 'Reactor caught, ', e
+        print 'Reactor exited'
 
     def submit(self, event, specs, params=None):
-        self.q.put((event, specs, params))
+        self.eq.put((event, specs, params))
 
     def transition(self, mod, state):
         self._transitions.append((mod, state))

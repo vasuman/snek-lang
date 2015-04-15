@@ -230,8 +230,12 @@ def get_event_name(gen):
         quals.append(ast.literal_eval(s))
     return name, quals
 
-SPECIAL_EVENTS = ['entry', 'exit', 'connected', 'closed']
-
+SPECIAL_EVENTS = {
+    'entry': ['prev'],
+    'exit': ['next'],
+    'connected': ['comm', 'src'],
+    'closed': ['comm', 'src']
+}
 
 def parse_module(gen, f):
     def parse_state(gen):
@@ -241,8 +245,8 @@ def parse_module(gen, f):
             toks = map(lambda x: x.get_tuple(), gen.get_block())
             body = resolve_directives(tkn.untokenize(toks))
             func_name = target.get_func_name(mod._namespace)
-            print func_name, body
-            handler = mod.assemble_trap(func_name, body, state.name)
+            params = SPECIAL_EVENTS.get(event_name, ['ctx'])
+            handler = mod.assemble_trap(func_name, body, state.name, params=params)
             # TODO(vasuman): handle special events!
             if event_name in ('entry', 'exit'):
                 if getattr(state, 'on_' + event_name) != None:
@@ -271,6 +275,10 @@ def parse_module(gen, f):
         mod.default = def_state
         gen.assert_kind(tkn.NEWLINE)
 
+    def parse_globals(gen):
+        gen.assert_block()
+        gen.get_block()
+    
     mod_name = gen.assert_kind(tkn.NAME)
     mod = target.SnekModule(mod_name)
     gen.assert_block()
