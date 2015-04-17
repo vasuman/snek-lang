@@ -1,0 +1,27 @@
+decl:
+  import os
+  PORT = int(os.getenv('PORT')  or 8000)
+
+event Echo struct:
+  str msg
+
+module Server:
+  comm port p Echo
+  state init:
+    on entry:
+      p.listen(PORT)
+    on Echo:
+      print 'echoing, ', ctx.params.msg
+      $fire p Echo (ctx.params.msg,)
+
+module Client:
+  comm pipe p Echo
+  state init:
+    on entry:
+      p.connect(('127.0.0.1', PORT))
+    on connected."p":
+      $fire local Echo ('',)
+    on Echo:
+      print "Got echo: ", ctx.params.msg
+      m = raw_input('>> ')
+      $fire p Echo (m,)

@@ -1,0 +1,4 @@
+module Example:
+  state init:
+    on entry:
+      $exit

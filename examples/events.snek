@@ -1,0 +1,10 @@
+event Ping
+
+module Example:
+  state init:
+    on entry:
+      $event:e Ping
+      $pump local e
+    on Ping:
+      print "got a ping!"
+  default init

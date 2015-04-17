@@ -1,0 +1,12 @@
+event Para struct:
+  str a
+  float b
+
+module Example:
+  state init:
+    on entry:
+      $event:e Para ('hello', 0.1)
+      $pump local e
+    on Para:
+      print 'parameters, ', ctx.params
+  default init

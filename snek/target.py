@@ -26,7 +26,6 @@ class Union():
         self.kmap = kmap
 
     def assert_has(self, qual):
-        print 'km:', self.kmap
         if qual not in self.kmap:
             raise TypeException("invalid specifier %s" % qual)
 
@@ -42,11 +41,6 @@ class Union():
         self.assert_has(quals[0])
         return self.kmap[quals[0]].validate(quals[1:])
 
-class Context():
-    def __init__(self, specs, params):
-        self.specs = specs
-        self.params = params
-
 class Field():
 
     def __init__(self, type, id):
@@ -54,6 +48,8 @@ class Field():
         self.id = id
 
     def assert_type(self, val):
+        if self.type == str and type(val) == unicode:
+            return
         if type(val) != self.type:
             raise TypeException("type for field %s don't match" % self.id)
 
@@ -75,13 +71,13 @@ class Struct():
 
     def new(self, specs, params):
         assert_empty(specs)
-        if type(params) == map:
+        if type(params) == dict:
             if set(params.keys()) != set(self.fmap.keys()):
                 raise TypeException("field names don't match")
             for k, v in params.items():
                 self.fmap[k].assert_type(v)
             return AttrDict(params)
-        elif type(params) == tuple:
+        elif type(params) in (tuple, list):
             if len(params) != len(self.fmap):
                 raise TypeException("param length mismatch")
             a = AttrDict()
@@ -91,7 +87,7 @@ class Struct():
                 a[f.id] = item
             return a
         else:
-            raise TypeException("unhandled params case")
+            raise TypeException("unhandled params case ", params, type(params))
 
 
 class Empty():
@@ -115,6 +111,7 @@ def get_func_name(ns):
 
 GET_REACTOR_FUNC = '_get_reactor'
 GET_MODULE_FUNC = '_get_module'
+GET_EVENT_FUNC = '_get_event'
 
 FUNC_TEMPLATE = '''
 @match_state("%s")
@@ -133,14 +130,23 @@ class ModState():
 
 class SnekModule():
 
-    def __init__(self, name):
+    def __init__(self, name, f):
         self.name = name
+        self.f = f
+        self.gs = []
+        self.comms = {}
         self.states = {}
         self.state = None
         self.default = None
         self.reactor = None
         self._namespace = {}
         self._setup_namespace()
+        self.input_handlers = []
+
+    def set_reactor(self, reactor):
+        self.reactor = reactor
+        for comm in self.comms.values():
+            comm.set_reactor(reactor)
 
     def _add_func(self, func):
         self._namespace[func.__name__] = func
@@ -151,23 +157,44 @@ class SnekModule():
                 def f(*args, **kwargs):
                     if self.state == state:
                         func(*args, **kwargs)
-                    else:
-                        print 'st mismatch', self.state, state
                 return f
             return wrapper
 
         exec '' in self._namespace
         self._namespace[GET_REACTOR_FUNC] = lambda: self.reactor
         self._namespace[GET_MODULE_FUNC] = lambda: self
+        self._namespace[GET_EVENT_FUNC] = lambda name: self.f.events[name]
         self._add_func(match_state)
 
-    def _exec(self, name):
+    def init_globals(self, block):
+        body = ast.parse(block).body
+        for stmt in body:
+            if type(stmt) != ast.Assign:
+                raise TypeException('not an assign statement')
+            targets = stmt.targets
+            if len(targets) != 1:
+                raise TypeException('multipe assignments not allowed')
+            self.gs.append(targets[0].id)
+        exec block in self._namespace
+
+    def _wrap_exec(self, fname):
         def wrapper(*args, **kwargs):
-            call_string = '%s(*%s, **%s)' % (name, args, kwargs)
+            #TODO: check if name not used in namespace
+            names = []
+            for i, arg in enumerate(args):
+                name = '_arg%d' % i
+                self._namespace[name] = arg
+                names.append(name)
+            for i, key, kwarg in enumerate(kwargs):
+                name = '_kwarg%d' % i
+                self._namespace[name] = kwarg
+                names.append('%s = %s' % (key, name))
+            call_string = '%s(%s)' % (fname, ', '.join(names))
             exec call_string in self._namespace
         return wrapper
 
     def assemble_trap(self, name, body, state, params=[]):
+        globals_str = 'globals %s' % ','.join(self.gs + self.comms.keys())
         # Parsing body
         bmod = ast.parse(body)
         fmod = ast.parse(FUNC_TEMPLATE % (state, ','.join(params)))
@@ -179,7 +206,14 @@ class SnekModule():
         ast.fix_missing_locations(fmod)
         # Compiling!!
         exec compile(fmod, '<ast>', 'exec') in self._namespace
-        return self._exec(name)
+        return self._wrap_exec(name)
+
+    def add_comm(self, comm):
+        self.comms[comm.name] = comm
+        self._namespace[comm.name] = comm
+
+    def exec_decl(self, decl):
+        exec decl in self._namespace
 
 class SnekFile(object):
 
@@ -187,3 +221,14 @@ class SnekFile(object):
         self.modules = []
         self.events = {}
         self.decl = None
+
+    def get_module(self, name):
+        for module in self.modules:
+            if module.name == name:
+                return module
+        return None
+
+    def done_parse(self):
+        if self.decl is not None:
+            for module in self.modules:
+                module.exec_decl(self.decl)

@@ -1,0 +1,64 @@
+event Evt union:
+  "Join" union:
+    "Req" struct:
+      str uname
+    "Ack"
+    "Nack"
+  "Message" union:
+    "Send" struct:
+      str msg
+    "Broadcast" struct:
+      str nick
+      str msg
+      int when
+
+event GetNick
+
+decl:
+  import os
+  import time
+  PORT = int(os.getenv('PORT') or 8000)
+
+module Client:
+  comm pipe p Evt
+  state init:
+    on entry:
+      p.connect(('127.0.0.1', PORT))
+    on connected."p":
+      $fire local GetNick
+    on GetNick:
+      $fire p Evt."Join"."Req" (raw_input("Type a nick: "),)
+    on Evt."Join"."Ack":
+      $transition joined
+    on Evt."Join"."Nack":
+      print 'Nick already registered'
+      $fire local GetNick
+  state joined:
+    on entry:
+      $prompt ">>"
+    on input:
+      $fire p Evt."Message"."Send" (input,)
+      $prompt ">>"
+    on Evt."Message"."Broadcast":
+      print '\n<%s>: %s\n ' % (ctx.params.nick, ctx.params.msg),
+
+module Server:
+  comm port p Evt
+  vars:
+    nodes = {}
+  state init:
+    on entry:
+      p.listen(PORT)
+    on Evt."Join"."Req":
+      u = ctx.params.uname
+      c = ctx.extra['comm']
+      print ctx.extra
+      if u in nodes.values():
+        $fire c Evt."Join"."Nack"
+      else:
+        nodes[ctx.extra['remote']] = u
+        $fire c Evt."Join"."Ack"
+    on Evt."Message"."Send":
+      u = nodes[ctx.extra['remote']]
+      $event:e Evt."Message"."Broadcast" (u, ctx.params.msg, int(time.time()))
+      $pump p e

@@ -1,0 +1,6 @@
+module Example:
+  state init:
+    on entry:
+      $prompt ">>"
+    on input:
+      print 'Got input', input

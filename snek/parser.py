@@ -5,7 +5,7 @@ import ast
 # TODO(vasuman): Package-based relative imports
 import target
 import events
-
+import net
 
 class ParseException(Exception):
     pass
@@ -118,7 +118,7 @@ def parse_block(gen, **kwargs):
     gen.next()  # Consume `DEDENT`
 
 
-VALID_TYPES = ['int', 'str', 'float', 'map', 'list']
+VALID_TYPES = ['int', 'str', 'float', 'dict', 'list']
 def get_type(name):
     if not name in VALID_TYPES:
         raise ParseException('invalid type, %s' % name)
@@ -129,10 +129,9 @@ def parse_event(gen, f):
         def parse_params(gen):
             fields = []
             while gen.peek.kind != tkn.DEDENT:
-                type = gen.assert_kind(tkn.NAME)
+                type = get_type(gen.assert_kind(tkn.NAME))
                 id = gen.assert_kind(tkn.NAME)
                 gen.assert_kind(tkn.NEWLINE)
-                print type, id
                 fields.append(target.Field(type, id))
             gen.next()
             return target.Struct(fields)
@@ -144,13 +143,14 @@ def parse_event(gen, f):
                 type = parse_type(gen)
                 fmap[key] = type
             gen.next()
-            print fmap
             return target.Union(fmap)
 
         if gen.peek.kind == tkn.NEWLINE:
             gen.next()  # Consume
             return target.Empty()
         name = gen.assert_kind(tkn.NAME)
+        if name in SPECIAL_EVENTS:
+            raise ParseException('%s is a special event name' % name)
         if name == 'struct':
             gen.assert_block()
             return parse_params(gen)
@@ -158,8 +158,7 @@ def parse_event(gen, f):
             gen.assert_block()
             return parse_union(gen)
         else:
-            raise ParseException(
-                'type must be `param` or `union` got %s' % name)
+            raise ParseException('type must be `param` or `union` got %s' % name)
 
     event_name = gen.assert_kind(tkn.NAME)
     event_type = parse_type(gen)
@@ -177,17 +176,23 @@ def normalize(block_str):
     return '\n'.join([line[base_indent:] for line in lines])
 
 
-def parse_decl(gen):
+def parse_decl(gen, f):
     gen.assert_block()
+    f.decl = tkn.untokenize(map(lambda x: x.get_tuple(), gen.get_block()))
 
 
 def buf_line(line):
     return BytesIO(line.strip()).readline
 
+def get_till_end(gen):
+    toks = []
+    while not gen.empty:
+        toks.append(gen.next().get_tuple())
+    return tkn.untokenize(toks)
 
 def parse_directive(line):
-    def get_param(first=False):
-        if not first:
+    def get_param(comma=False):
+        if comma:
             gen.assert_val(',')
         return gen.assert_kind(tkn.NAME)
 
@@ -203,11 +208,39 @@ def parse_directive(line):
     gen.assert_val('$')
     name = gen.assert_kind(tkn.NAME)
     if name == 'transition':
-        next_state = get_param(True)
+        next_state = get_param()
         ret += '%s().transition(%s(), "%s")' % \
             (target.GET_REACTOR_FUNC, target.GET_MODULE_FUNC, next_state)
+    elif name == 'event':
+        dst = get_dst_name()
+        event_name, specs = get_event_name(gen)
+        params = get_till_end(gen).strip() or 'None'
+        ret += "%s = (%s(%s), [%s], %s)" % \
+               (dst, target.GET_EVENT_FUNC, repr(event_name), ','.join(map(repr, specs)), params)
     elif name == 'pump':
-        stream = get_param(True)
+        stream = get_param()
+        evt = get_param()
+        if stream == 'local':
+            ret += '%s().submit(*%s)' % (target.GET_REACTOR_FUNC, evt)
+        else:
+            #Pump to socket
+            ret += '%s.pump(*%s)' % (stream, evt)
+    elif name == 'fire':
+        stream = get_param()
+        event_name, specs = get_event_name(gen)
+        params = get_till_end(gen).strip() or 'None'
+        args = '%s(%s), [%s], %s' % \
+               (target.GET_EVENT_FUNC, repr(event_name), ','.join(map(repr, specs)), params)
+        if stream == 'local':
+            ret += '%s().submit(%s)' % (target.GET_REACTOR_FUNC, args)
+        else:
+            ret += '%s.pump(%s)' % (stream, args)
+    elif name == 'prompt':
+        prompt = gen.assert_kind(tkn.STRING)
+        ret += '%s()._get_input(%s, %s())' % \
+               (target.GET_REACTOR_FUNC, prompt, target.GET_MODULE_FUNC)
+    elif name == 'exit':
+        ret += '%s().stop()' % (target.GET_REACTOR_FUNC)
     else:
         raise ParseException('unknown directive (%s)' % name)
     if not gen.empty:
@@ -217,6 +250,7 @@ def parse_directive(line):
 
 def resolve_directives(func_str):
     return '\n'.join(map(parse_directive, func_str.splitlines()))
+
 
 DOT_TOK = Token((tkn.OP, '.'))
 
@@ -233,8 +267,9 @@ def get_event_name(gen):
 SPECIAL_EVENTS = {
     'entry': ['prev'],
     'exit': ['next'],
-    'connected': ['comm', 'src'],
-    'closed': ['comm', 'src']
+    'connected': ['comm', 'remote'],
+    'closed': ['comm', 'remote'],
+    'input': ['input']
 }
 
 def parse_module(gen, f):
@@ -247,13 +282,22 @@ def parse_module(gen, f):
             func_name = target.get_func_name(mod._namespace)
             params = SPECIAL_EVENTS.get(event_name, ['ctx'])
             handler = mod.assemble_trap(func_name, body, state.name, params=params)
-            # TODO(vasuman): handle special events!
             if event_name in ('entry', 'exit'):
                 if getattr(state, 'on_' + event_name) != None:
                     raise ParseException('multiple %s traps' % event_name)
                 if len(quals) != 0:
                     raise ParseException('not expecting qualifiers')
                 setattr(state, 'on_' + event_name, handler)
+            elif event_name in ('connected', 'disconnected'):
+                if len(quals) != 1:
+                    raise ParseException("expecting only comm name as qualifier")
+                cname = quals[0]
+                if not cname in mod.comms:
+                    raise ParseException("unknown comm %s" % cname)
+                comm = mod.comms[cname]
+                comm.add_listener(event_name, handler)
+            elif event_name == 'input':
+                mod.input_handlers.append(handler)
             elif event_name in f.events:
                 event = f.events[event_name]
                 event.trap(quals, handler)
@@ -265,10 +309,10 @@ def parse_module(gen, f):
         gen.assert_block()
         parse_block(gen, on=parse_trap)
         mod.states[state_name] = state
+        if mod.default is None:
+            mod.default = state_name
 
     def parse_def(gen):
-        if mod.default is not None:
-            raise ParseException('redeclared `default` state in %s' % mod_name)
         def_state = gen.assert_kind(tkn.NAME)
         if def_state not in mod.states:
             raise ParseException('invalid `default` state %s' % def_state)
@@ -277,16 +321,35 @@ def parse_module(gen, f):
 
     def parse_globals(gen):
         gen.assert_block()
-        gen.get_block()
-    
+        toks = map(lambda x: x.get_tuple(), gen.get_block())
+        mod.init_globals(tkn.untokenize(toks))
+
+    def parse_comm(gen):
+        v = gen.assert_kind(tkn.NAME)
+        n = gen.assert_kind(tkn.NAME)
+        event_name = gen.assert_kind(tkn.NAME)
+        gen.assert_kind(tkn.NEWLINE)
+        if not event_name in f.events:
+            raise ParseException('unknown event %s' % event_name)
+        event = f.events[event_name]
+        if v == 'pipe':
+            pipe = net.Pipe(n, event)
+            mod.add_comm(pipe)
+        elif v == 'port':
+            port = net.Port(n, event)
+            mod.add_comm(port)
+        #TODO(vasuman): integrate channels
+        else:
+            raise ParseException('invalid comm type %s' % v)
+
     mod_name = gen.assert_kind(tkn.NAME)
-    mod = target.SnekModule(mod_name)
+    mod = target.SnekModule(mod_name, f)
     gen.assert_block()
     parse_block(gen,
                 state=parse_state,
-                default=parse_def)
-    if mod.default is None:
-        raise ParseException('missing `default` state in %s' % mod_name)
+                default=parse_def,
+                comm=parse_comm,
+                vars=parse_globals)
     f.modules.append(mod)
 
 
@@ -307,14 +370,24 @@ def parse(readline):
             parse_decl(gen, f)
         else:
             raise ParseException('unexpected in <toplevel> (%s)' % name)
+    f.done_parse()
     return f
 
 
+def load_file(f):
+    return parse(f.readline)
+
 # REMOVE
 TEST_PROGRAM = '''
+decl:
+  import os
+  PORT = os.getenv('PORT')
+
 event Query union:
   "Hello"
-  "Bye"
+  "Bye" struct:
+    float f
+    str s
   "Ok" union:
     "Meh"
     "Bleh" struct:
@@ -324,15 +397,31 @@ event Query union:
       list l
 
 module Test:
+  comm pipe pi Query
+  comm port po Query
+  vars:
+    a = 0
+    b = {}
+    c = []
   state init:
-    on Query."Hello":
-      $transition stop
-      print "Not ok"
     on entry:
-      print "Hello World"
+      print "Hello World", a, b, c
+      po.listen(PORT_NUM)
+      pi.connect(('127.0.0.1', PORT_NUM))
+    on connected."pi":
+      print 'connected to po'
+      $event:e Query."Bye" (0.1, 'asa')
+      $pump pi e
+    on Query."Bye":
+      print "Yea!! Got Remotely"
+      print ctx.params, ctx.extra['comm'].name
+    on Query."Ok"."Bleh":
+      print 'ctx: ', ctx.specs
+  state stop:
+    on entry:
+      print "exiting"
   default init
 '''
-
 
 def parse_string(s):
     import io
@@ -345,4 +434,5 @@ if __name__ == '__main__':
 
 reload(target)
 reload(events)
+reload(net)
 # END REMOVE

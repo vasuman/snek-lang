@@ -1,0 +1,5 @@
+module Example:
+  state init:
+    on entry:
+      print "Hello world!"
+  default init
