@@ -1,0 +1,14 @@
+module Example
+  state a:
+    on entry:
+      print 'in state a'
+      $transition b
+  state b:
+    on entry:
+      print 'in state b'
+      $exit
+  state c:
+    on entry:
+      print 'in state c'
+      $transition b
+  # default c

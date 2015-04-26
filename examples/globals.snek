@@ -1,0 +1,7 @@
+module Example:
+  vars:
+    a = 1
+    b = 2
+  state init:
+    on entry:
+      print 'a: ', a, ' b: ', b

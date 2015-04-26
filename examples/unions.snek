@@ -5,7 +5,7 @@ event Ping union:
 module Example:
   state init:
     on entry:
-      $event:e Ping."B" #Change to B
+      $event:e Ping."A" #Change to B
       $pump local e
     on Ping."A":
       print 'got ping with A'

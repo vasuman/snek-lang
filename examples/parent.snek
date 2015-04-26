@@ -8,7 +8,8 @@ module Example:
       $event:e Ping."A"
       $pump local e
     on Ping."A":
-      print 'got ping with A'
+       assert 1 == 0, "Ok"
+       print 'got ping with A'
     on Ping:
       print 'parent trap'
   default init

@@ -2,8 +2,13 @@
 
 An experimental distributed DSL for Python.
 
+## Running Examples
 
-# Author
+```sh
+$ python run.py <file-name> [<module to instantiate>...]
+```
+
+## Author
 
 Vasuman R <vasumanar@gmail.com>
 
